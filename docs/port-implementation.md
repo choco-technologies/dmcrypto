@@ -54,7 +54,7 @@ The release uploads them to `vlatest`, `manifest.dmm` has
 `<cpu_name>` (dmod-boot passes DMOD_CPU_NAME). The entry is named
 `dmcrypto_port` either way, so the dependency found in a package's `.dmd` is
 satisfied by exactly one port. CI checks the lists (and that each family has
-one). A chip that is in no list has no manifest: dmf-get warns "Failed to
+one). A target with **no `cpu_name`** (the host - dmcrypto's own CI and every consumer's tests on x86 - or a generic target) includes `ports-.dmm`, which the script always writes: the software port. A chip that is in no list has no manifest: dmf-get warns "Failed to
 include manifest ... ports-<cpu_name>.dmm" and then does not find
 `dmcrypto_port` - add a line.
 
