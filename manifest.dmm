@@ -1,16 +1,17 @@
 # Include dynamically generated versions list from latest release
 $include https://github.com/choco-technologies/dmcrypto/releases/download/vlatest/versions.dmm
 
-# Module entries with version placeholder - expanded by $version-available.
-#
-# dmcrypto is the interface (no algorithms): built per architecture. The port
-# is one module, dmcrypto_port, in two packagings - exactly one is installed:
-#   dmcrypto_port     the hardware port of a CPU family (<cpu_family>); what the
-#                     family's peripherals lack it has in software
-#   dmcrypto_port_sw  the software port, for any architecture (<arch_name>)
-# Which a chip gets (an STM32F746 has no CRYP/HASH, an STM32F756 has) is
-# decided where the chip is known - the board's flash.dmd names the one it takes.
+# dmcrypto is the interface (no algorithms): built per architecture.
 dmcrypto         https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/dmcrypto-v<version>-<arch_name>.zip
 test_dmcrypto    https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/test_dmcrypto-v<version>-<arch_name>.zip
-dmcrypto_port    https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/dmcrypto_port-v<version>-<cpu_family>.zip
-dmcrypto_port_sw https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/dmcrypto_port_sw-v<version>-<arch_name>.zip
+
+# dmcrypto_port: exactly one per chip, under this one name (dmf-get takes the
+# dependencies of a package from its .dmd, which says "dmcrypto_port"). Which
+# package it is depends on the chip: the hardware port of its CPU family
+# (dmcrypto_port-v<version>-<cpu_family>.zip) or the software port
+# (dmcrypto_port_sw-v<version>-<arch_name>.zip). A tiny manifest per chip,
+# generated at release from src/port/*/mcus.txt (scripts/gen-ports-manifests.sh),
+# says which. A chip that is not in an mcus.txt has none: dmf-get warns
+# "Failed to include manifest .../ports-<cpu_name>.dmm" and does not find
+# dmcrypto_port - add the chip to its mcus.txt.
+$include https://github.com/choco-technologies/dmcrypto/releases/download/vlatest/ports-<cpu_name>.dmm

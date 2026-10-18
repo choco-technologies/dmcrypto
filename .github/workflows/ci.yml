@@ -39,6 +39,23 @@ jobs:
           dmf-get install -d ${DMOD_DMF_DIR}/test_dmcrypto-local.dmd -y
           dmod_loader build/dmf/test_dmcrypto.dmf
 
+  ports-manifests:
+    name: Check src/port/*/mcus.txt
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate the per-MCU manifests
+        run: |
+          scripts/gen-ports-manifests.sh ports-manifests
+          # Every family with a port has its list of chips
+          for dir in $(find src/port -mindepth 2 -maxdepth 2 -name port.c -printf '%h\n'); do
+            test -f "$dir/mcus.txt" || { echo "$dir/mcus.txt is missing"; exit 1; }
+          done
+
   discover-architectures:
     name: Discover Architectures
     runs-on: ubuntu-latest

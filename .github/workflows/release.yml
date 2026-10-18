@@ -8,7 +8,10 @@ name: Release
 #     family's, under the name the manifest gives it.
 #   - the hardware port of each CPU family (every src/port/<family>/ with a
 #     port.c except sw): dmcrypto_port, per DMOD_CPU_FAMILY.
-# Which chip gets which is the manifest's (and the board's) decision.
+# Which chip gets which: one small manifest per chip (ports-<cpu_name>.dmm,
+# generated from src/port/*/mcus.txt by scripts/gen-ports-manifests.sh) - the
+# manifest.dmm includes the one of the chip, and it names dmcrypto_port, so a
+# chip never has both ports.
 
 on:
   release:
@@ -112,11 +115,12 @@ jobs:
           : > package-names.txt
           for pkg_dir in "$PACKAGES_DIR"/*/; do
             pkg=$(basename "$pkg_dir")
-            # The software port is dmcrypto_port inside, dmcrypto_port_sw in
-            # the manifest: a board names which one it takes
+            # The software port is the same module (dmcrypto_port) as the
+            # hardware one: only the file is named dmcrypto_port_sw - the
+            # chip's ports-<cpu_name>.dmm points at it
             name="$pkg"
             if [ "$pkg" = "dmcrypto_port" ]; then name="dmcrypto_port_sw"; fi
-            echo "$name" >> package-names.txt
+            echo "$pkg" >> package-names.txt
 
             echo "${{ github.event.release.body }}" > "${pkg_dir}RELEASE_NOTES.txt"
             (cd "$pkg_dir" && zip -r "${OLDPWD}/${name}-${TAG}-${ARCH_DIR_NAME}.zip" .)
@@ -192,6 +196,27 @@ jobs:
             package-names.txt
           retention-days: 1
 
+  generate-ports-manifests:
+    name: Generate ports-<cpu_name>.dmm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate a manifest per MCU
+        run: |
+          scripts/gen-ports-manifests.sh ports-manifests
+          ls ports-manifests
+
+      - name: Upload the manifests as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ports-manifests
+          path: ports-manifests/*.dmm
+          retention-days: 1
+
   generate-versions-manifest:
     name: Generate versions.dmm
     needs: [build-sw, build-hw]
@@ -247,7 +272,7 @@ jobs:
 
   upload-release-assets:
     name: Upload Release Assets
-    needs: [build-sw, build-hw, generate-versions-manifest]
+    needs: [build-sw, build-hw, generate-versions-manifest, generate-ports-manifests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -293,6 +318,11 @@ jobs:
               --clobber
           fi
 
+          for manifest in artifacts/ports-manifests/*.dmm; do
+            gh release upload ${{ github.event.release.tag_name }} "$manifest" \
+              --repo ${{ github.repository }} --clobber
+          done
+
           echo "Successfully uploaded ${#zip_files[@]} artifact(s) to ${{ github.event.release.tag_name }}"
 
       - name: Create or update latest release
@@ -336,5 +366,11 @@ jobs:
               --repo ${{ github.repository }} \
               --clobber
           fi
+
+          # The chips' manifests: manifest.dmm includes them from vlatest
+          for manifest in artifacts/ports-manifests/*.dmm; do
+            gh release upload vlatest "$manifest" \
+              --repo ${{ github.repository }} --clobber
+          done
 
           echo "Successfully uploaded ${#zip_files[@]} artifact(s) to vlatest"

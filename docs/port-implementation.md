@@ -33,10 +33,27 @@ package each as `dmcrypto_port-<version>-<family>.zip`.
 
 ## Which chip gets which port
 
-Not decided here. A family's chips differ in what they have (STM32F745/F746:
-no CRYP/HASH; F756/F777: both); the manifest or the board's `flash.dmd`
-names the package: `dmcrypto_port` (hardware, per family) or
-`dmcrypto_port_sw` (software, per architecture).
+A family's chips differ in what they have (STM32F745/F746: no CRYP/HASH;
+F756/F777: both). Each family lists its chips in `src/port/<family>/mcus.txt`:
+
+    <cpu_name> hw|sw        # cpu_name: dmod-boot's DMOD_CPU_NAME, lower case
+
+`hw` gets the family's hardware port, `sw` the software one. Chips of families
+with no hardware port here (e.g. ESP32-S3) are listed in `src/port/sw/mcus.txt`
+(all `sw`). `scripts/gen-ports-manifests.sh` turns the lists into
+`ports-<cpu_name>.dmm`, one tiny manifest per chip with the single line
+
+    dmcrypto_port <url of dmcrypto_port-v<version>-<cpu_family>.zip   # hw
+    dmcrypto_port <url of dmcrypto_port_sw-v<version>-<arch_name>.zip # sw
+
+The release uploads them to `vlatest`, `manifest.dmm` has
+`$include .../vlatest/ports-<cpu_name>.dmm`, and `dmf-get` substitutes
+`<cpu_name>` (dmod-boot passes DMOD_CPU_NAME). The entry is named
+`dmcrypto_port` either way, so the dependency found in a package's `.dmd` is
+satisfied by exactly one port. CI checks the lists (and that each family has
+one). A chip that is in no list has no manifest: dmf-get warns "Failed to
+include manifest ... ports-<cpu_name>.dmm" and then does not find
+`dmcrypto_port` - add a line.
 
 ## Rules for a port
 

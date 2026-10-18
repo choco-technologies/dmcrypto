@@ -1,0 +1,9 @@
+# The STM32F7 chips dmcrypto knows: <cpu_name> hw|sw
+#   cpu_name  dmod-boot's DMOD_CPU_NAME (configs/mcu/*.cmake), lower case
+#   hw        the chip has the peripherals this family's port uses (CRYP, HASH)
+#   sw        it has not: it gets the software port instead
+# A chip not listed here has no dmcrypto_port manifest - add it (a new line is
+# all it takes; the next release publishes its manifest).
+stm32f746xg sw
+stm32f746zg sw
+stm32f756xg hw

@@ -1,0 +1,4 @@
+# Chips of the families that have no hardware port in this repository (and
+# any chip that wants the software port only): they all get the software port.
+# Format as in stm32f7/mcus.txt; every line here is sw.
+esp32s3fn16r8 sw
