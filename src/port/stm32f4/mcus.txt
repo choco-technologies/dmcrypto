@@ -1,0 +1,3 @@
+# The STM32F4 chips dmcrypto knows: <cpu_name> hw|sw
+# See stm32f7/mcus.txt for the format.
+stm32f407g  sw

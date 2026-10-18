@@ -3,11 +3,35 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/choco-technologies/dmcrypto/actions/workflows/ci.yml/badge.svg)](https://github.com/choco-technologies/dmcrypto/actions/workflows/ci.yml)
 
-dmcrypto DMOD library module.
+Cryptographic primitives for DMOD: hashes (SHA-1/2), HMAC, PBKDF2, HKDF,
+AES (CBC, CTR), AES-GCM and ChaCha20-Poly1305, random bytes - one interface
+for every board, hardware-accelerated where the chip has an accelerator.
 
 ## Description
 
-TODO: describe what this module does.
+`dmcrypto` is only the interface (`include/dmcrypto.h`, shaped after PSA
+Crypto): it validates the arguments and calls the port. The algorithms are
+the **port's** (`dmcrypto_port`, `include/dmcrypto_port.h`); exactly one port
+is loaded:
+
+| Port | Code | Built for | Package |
+|---|---|---|---|
+| software | `src/port/sw` | every architecture dmod supports (found automatically) | `dmcrypto_port_sw-...-<arch_name>.zip` |
+| hardware | `src/port/<family>` (`stm32f7`, `stm32f4`; shared: `stm32_common`) | every CPU family | `dmcrypto_port-...-<cpu_family>.zip` |
+
+A hardware port uses the family's peripherals (CRYP, HASH, RNG) for what they
+do and compiles in only the software algorithms it lacks, so no board carries
+both. Which chip gets which package is in `src/port/*/mcus.txt` (`<cpu_name> hw|sw`,
+an STM32F746 has no CRYP/HASH, an STM32F756 has): the release makes a tiny
+manifest per chip from it (`ports-<cpu_name>.dmm`) and `manifest.dmm` includes the
+one of the chip - so it has exactly one `dmcrypto_port`, under that one name.
+**A new chip needs a line in its `mcus.txt`.**
+`dmcrypto_get_capabilities()` says what the loaded port has and what of it the
+hardware does. A caller that calls often and has checked its arguments can call
+`dmcrypto_port_*` directly. See [docs/api-reference.md](docs/api-reference.md).
+
+**Status:** the interface and the build/release are in place; the algorithms
+are TODO (every port function returns `-ENOTSUP` for now).
 
 ## Building
 
@@ -16,7 +40,7 @@ TODO: describe what this module does.
 ```bash
 mkdir -p build
 cd build
-cmake ..
+cmake .. -DDMOD_CPU_FAMILY=sw          # or stm32f7, stm32f4: a hardware port
 cmake --build .
 ```
 

@@ -1,10 +1,17 @@
 # Include dynamically generated versions list from latest release
 $include https://github.com/choco-technologies/dmcrypto/releases/download/vlatest/versions.dmm
 
-# Module entries with version placeholder - expanded by $version-available.
-# Both the core module and the port use <cpu_family> here, not <arch_name>:
-# the release workflow packages this repo per DMOD_CPU_FAMILY, not per full
-# architecture (see dmfmc/manifest.dmm or dmuart/manifest.dmm for the
-# real-world reference).
-dmcrypto      https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/dmcrypto-v<version>-<cpu_family>.zip
-dmcrypto_port https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/dmcrypto_port-v<version>-<cpu_family>.zip
+# dmcrypto is the interface (no algorithms): built per architecture.
+dmcrypto         https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/dmcrypto-v<version>-<arch_name>.zip
+test_dmcrypto    https://github.com/choco-technologies/dmcrypto/releases/download/v<version>/test_dmcrypto-v<version>-<arch_name>.zip
+
+# dmcrypto_port: exactly one per chip, under this one name (dmf-get takes the
+# dependencies of a package from its .dmd, which says "dmcrypto_port"). Which
+# package it is depends on the chip: the hardware port of its CPU family
+# (dmcrypto_port-v<version>-<cpu_family>.zip) or the software port
+# (dmcrypto_port_sw-v<version>-<arch_name>.zip). A tiny manifest per chip,
+# generated at release from src/port/*/mcus.txt (scripts/gen-ports-manifests.sh),
+# says which. A chip that is not in an mcus.txt has none: dmf-get warns
+# "Failed to include manifest .../ports-<cpu_name>.dmm" and does not find
+# dmcrypto_port - add the chip to its mcus.txt.
+$include https://github.com/choco-technologies/dmcrypto/releases/download/vlatest/ports-<cpu_name>.dmm

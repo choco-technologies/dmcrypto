@@ -1,10 +1,47 @@
 name: Release
 
+# Two kinds of packages, both from this repo:
+#   - the software port (src/port/sw) and the interface: built for EVERY
+#     architecture dmod supports (found in dmod's configs/arch, so a new
+#     architecture is picked up without touching this file). The port is
+#     packaged as dmcrypto_port_sw: the same module (dmcrypto_port) as a
+#     family's, under the name the manifest gives it.
+#   - the hardware port of each CPU family (every src/port/<family>/ with a
+#     port.c except sw): dmcrypto_port, per DMOD_CPU_FAMILY.
+# Which chip gets which: one small manifest per chip (ports-<cpu_name>.dmm,
+# generated from src/port/*/mcus.txt by scripts/gen-ports-manifests.sh) - the
+# manifest.dmm includes the one of the chip, and it names dmcrypto_port, so a
+# chip never has both ports.
+
 on:
   release:
     types: [created]
 
 jobs:
+  discover-architectures:
+    name: Discover Architectures
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      architectures: ${{ steps.list-archs.outputs.architectures }}
+    steps:
+      - name: Fetch dmod to discover architectures
+        run: |
+          # Only dmod itself: this step needs nothing else this repo fetches
+          git clone --depth 1 https://github.com/choco-technologies/dmod.git dmod_discovery
+
+      - name: List available architectures
+        id: list-archs
+        run: |
+          ARCHS=$(find dmod_discovery/configs/arch -name "tools-cfg.cmake" | \
+            sed "s|dmod_discovery/configs/arch/||g" | \
+            sed 's|/tools-cfg.cmake||g' | \
+            jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+          echo "Found architectures: $ARCHS"
+          echo "architectures=$ARCHS" >> $GITHUB_OUTPUT
+
   discover-cpu-families:
     name: Discover CPU Families
     runs-on: ubuntu-latest
@@ -19,16 +56,91 @@ jobs:
       - name: List available CPU families
         id: list-families
         run: |
+          # sw is the software port, built per architecture (build-sw)
           CPU_FAMILIES=$(find src/port -mindepth 2 -maxdepth 2 -name "port.c" -type f -printf '%h\n' | \
             xargs -n1 basename | \
+            grep -vx 'sw' | \
             sort | \
             jq -R -s -c 'split("\n") | map(select(length > 0))')
 
           echo "Found CPU families: $CPU_FAMILIES"
           echo "cpu_families=$CPU_FAMILIES" >> $GITHUB_OUTPUT
 
-  build-dmcrypto:
-    name: Build dmcrypto for ${{ matrix.cpu_family }}
+  build-sw:
+    name: Software port for ${{ matrix.arch_name }}
+    needs: discover-architectures
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        arch_name: ${{ fromJson(needs.discover-architectures.outputs.architectures) }}
+
+    container:
+      image: chocotechnologies/dmod:1.0.4
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build for ${{ matrix.arch_name }}
+        run: |
+          set -e
+          ARCH_DIR_NAME=$(echo "${{ matrix.arch_name }}" | sed 's|/|-|')
+          echo "ARCH_DIR_NAME=$ARCH_DIR_NAME" >> $GITHUB_ENV
+          mkdir -p build_sw_$ARCH_DIR_NAME
+          cd build_sw_$ARCH_DIR_NAME
+
+          # DMOD_DMR_PATH is set for dmcrypto and dmcrypto_port, so this also
+          # assembles packages/<module>/ for each of them (and the tests')
+          cmake .. -DDMOD_CPU_FAMILY=sw \
+            -DDMOD_TOOLS_NAME=arch/${{ matrix.arch_name }} \
+            -DDMOD_MODULE_VERSION="${{ steps.get_version.outputs.version }}"
+          cmake --build .
+          ls -la packages/
+
+      - name: Create release archives
+        run: |
+          set -e
+          PACKAGES_DIR="build_sw_$ARCH_DIR_NAME/packages"
+          TAG="${{ github.event.release.tag_name }}"
+
+          : > package-names.txt
+          for pkg_dir in "$PACKAGES_DIR"/*/; do
+            pkg=$(basename "$pkg_dir")
+            # The software port is the same module (dmcrypto_port) as the
+            # hardware one: only the file is named dmcrypto_port_sw - the
+            # chip's ports-<cpu_name>.dmm points at it
+            name="$pkg"
+            if [ "$pkg" = "dmcrypto_port" ]; then name="dmcrypto_port_sw"; fi
+            echo "$pkg" >> package-names.txt
+
+            echo "${{ github.event.release.body }}" > "${pkg_dir}RELEASE_NOTES.txt"
+            (cd "$pkg_dir" && zip -r "${OLDPWD}/${name}-${TAG}-${ARCH_DIR_NAME}.zip" .)
+          done
+
+          echo "Created archives:"
+          ls -lh *-"${TAG}"-"${ARCH_DIR_NAME}".zip
+          cat package-names.txt
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-sw-${{ env.ARCH_DIR_NAME }}
+          path: |
+            *.zip
+            package-names.txt
+          retention-days: 1
+
+  build-hw:
+    name: Hardware port for ${{ matrix.cpu_family }}
     needs: discover-cpu-families
     runs-on: ubuntu-latest
     permissions:
@@ -50,71 +162,64 @@ jobs:
           VERSION="${{ github.event.release.tag_name }}"
           VERSION="${VERSION#v}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Extracted version: $VERSION"
 
-      - name: Build dmcrypto for ${{ matrix.cpu_family }}
+      - name: Build for ${{ matrix.cpu_family }}
         run: |
           set -e
-          CPU_FAMILY="${{ matrix.cpu_family }}"
-          BUILD_NAME="port-${CPU_FAMILY}"
-          echo "BUILD_NAME=$BUILD_NAME" >> $GITHUB_ENV
-          echo "ARTIFACT_NAME=release-$BUILD_NAME" >> $GITHUB_ENV
-          mkdir -p build_$BUILD_NAME
-          cd build_$BUILD_NAME
-
-          # DMOD_DMR_PATH is already set for both dmcrypto and
-          # dmcrypto_port in their respective CMakeLists.txt, so this
-          # build also assembles packages/<module>/ for every module defined
-          # in this repo (normally dmcrypto and dmcrypto_port, but
-          # this discovers whatever is actually there).
-          cmake .. \
-            -DDMOD_MODULE_VERSION="${{ steps.get_version.outputs.version }}" \
-            -DDMOD_CPU_FAMILY="${CPU_FAMILY}"
-
+          mkdir -p build_${{ matrix.cpu_family }}
+          cd build_${{ matrix.cpu_family }}
+          cmake .. -DDMOD_CPU_FAMILY="${{ matrix.cpu_family }}" \
+            -DDMOD_MODULE_VERSION="${{ steps.get_version.outputs.version }}"
           cmake --build .
+          ls -la packages/
 
-          echo "Build completed for CPU family: ${CPU_FAMILY}"
-          ls -la packages/ || echo "No packages directory"
-
-      - name: Add release notes and create release archives
+      - name: Create release archive
         run: |
           set -e
-          BUILD_DIR="build_$BUILD_NAME"
-          TAG="${{ github.event.release.tag_name }}"
           CPU="${{ matrix.cpu_family }}"
-          PACKAGES_DIR="$BUILD_DIR/packages"
+          TAG="${{ github.event.release.tag_name }}"
+          # Only the port: the interface (dmcrypto) is the architecture's, from build-sw
+          pkg_dir="build_$CPU/packages/dmcrypto_port"
+          test -d "$pkg_dir"
 
-          if [ ! -d "$PACKAGES_DIR" ] || [ -z "$(ls -A "$PACKAGES_DIR")" ]; then
-            echo "Error: no packages found in $PACKAGES_DIR"
-            exit 1
-          fi
-
-          : > package-names.txt
-          for pkg_dir in "$PACKAGES_DIR"/*/; do
-            pkg=$(basename "$pkg_dir")
-            echo "$pkg" >> package-names.txt
-
-            echo "${{ github.event.release.body }}" > "${pkg_dir}RELEASE_NOTES.txt"
-            (cd "$pkg_dir" && zip -r "${OLDPWD}/${pkg}-${TAG}-${CPU}.zip" .)
-          done
-
-          echo "Created archives:"
+          echo "dmcrypto_port" > package-names.txt
+          echo "${{ github.event.release.body }}" > "${pkg_dir}/RELEASE_NOTES.txt"
+          (cd "$pkg_dir" && zip -r "${OLDPWD}/dmcrypto_port-${TAG}-${CPU}.zip" .)
           ls -lh *-"${TAG}"-"${CPU}".zip
-          echo "Packages found:"
-          cat package-names.txt
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
+          name: release-hw-${{ matrix.cpu_family }}
           path: |
             *.zip
             package-names.txt
           retention-days: 1
 
+  generate-ports-manifests:
+    name: Generate ports-<cpu_name>.dmm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate a manifest per MCU
+        run: |
+          scripts/gen-ports-manifests.sh ports-manifests
+          ls ports-manifests
+
+      - name: Upload the manifests as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ports-manifests
+          path: ports-manifests/*.dmm
+          retention-days: 1
+
   generate-versions-manifest:
     name: Generate versions.dmm
-    needs: [discover-cpu-families, build-dmcrypto]
+    needs: [build-sw, build-hw]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -167,7 +272,7 @@ jobs:
 
   upload-release-assets:
     name: Upload Release Assets
-    needs: [build-dmcrypto, generate-versions-manifest]
+    needs: [build-sw, build-hw, generate-versions-manifest, generate-ports-manifests]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -213,6 +318,11 @@ jobs:
               --clobber
           fi
 
+          for manifest in artifacts/ports-manifests/*.dmm; do
+            gh release upload ${{ github.event.release.tag_name }} "$manifest" \
+              --repo ${{ github.repository }} --clobber
+          done
+
           echo "Successfully uploaded ${#zip_files[@]} artifact(s) to ${{ github.event.release.tag_name }}"
 
       - name: Create or update latest release
@@ -256,5 +366,11 @@ jobs:
               --repo ${{ github.repository }} \
               --clobber
           fi
+
+          # The chips' manifests: manifest.dmm includes them from vlatest
+          for manifest in artifacts/ports-manifests/*.dmm; do
+            gh release upload vlatest "$manifest" \
+              --repo ${{ github.repository }} --clobber
+          done
 
           echo "Successfully uploaded ${#zip_files[@]} artifact(s) to vlatest"

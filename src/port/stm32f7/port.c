@@ -1,29 +1,26 @@
 #define DMOD_ENABLE_REGISTRATION    ON
 #include "dmcrypto_port.h"
 #include "dmod.h"
+#include "../stm32_common/stm32_common.h"
+
+/*
+ * dmcrypto port for STM32F7 (CRYP and HASH on the F756/F777 and the like, not on the F745/F746).
+ * The algorithms and the API are stm32_common's; this file is the family's
+ * module lifecycle and what differs from the other families.
+ */
 
 /* ---- DMOD lifecycle ---- */
 
 int dmod_init(const Dmod_Config_t *Config)
 {
-    Dmod_Printf("dmcrypto port module initialized (stm32f7)\n");
-    return 0;
+    (void)Config;
+    Dmod_Printf("dmcrypto port module initialized (%s)\n", DMCRYPTO_PORT_LABEL);
+    return stm32_crypto_common_init();
 }
 
 int dmod_deinit(void)
 {
-    Dmod_Printf("dmcrypto port module deinitialized (stm32f7)\n");
+    Dmod_Printf("dmcrypto port module deinitialized (%s)\n", DMCRYPTO_PORT_LABEL);
+    stm32_crypto_common_deinit();
     return 0;
 }
-
-/* ---- API implementation ----
- *
- * Implement the dmod_dmcrypto_port_api_declaration(...) functions
- * declared in include/dmcrypto_port.h here. Register an interrupt
- * handler if needed, e.g.:
- *
- *   DMOD_IRQ_HANDLER(SOME_IRQn)
- *   {
- *       // handle interrupt
- *   }
- */
