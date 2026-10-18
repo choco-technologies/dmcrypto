@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
 
-set(DMOD_CPU_FAMILY "stm32f7" CACHE STRING "Target CPU family")
+# "sw" is the software port (any architecture: pass -DDMOD_TOOLS_NAME=arch/<arch>);
+# stm32f7, stm32f4, ... are the hardware ports of a CPU family.
+set(DMOD_CPU_FAMILY "sw" CACHE STRING "Target CPU family, or sw for the software port")
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/port/${DMOD_CPU_FAMILY}/config.cmake)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -74,11 +76,6 @@ target_include_directories(${DMOD_MODULE_NAME} PRIVATE
 target_include_directories(${DMOD_MODULE_NAME}_if INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-
-# To depend on another module's headers, use:
-#   dmod_link_modules(${DMOD_MODULE_NAME}
-#       other_module@1.0
-#   )
 
 add_subdirectory(src/port)
 target_link_libraries(${DMOD_MODULE_NAME} ${DMOD_MODULE_NAME}_port_if)

@@ -1,24 +1,47 @@
-# Adding a New MCU Port to dmcrypto
+# Adding a port to dmcrypto
 
-`dmcrypto_port` currently supports `stm32f7`. The port is split from
-the core `dmcrypto` module so a new architecture can be added without
-touching architecture-independent logic.
+A port is `dmcrypto_port`: the module that implements every
+`dmod_dmcrypto_port_api_declaration(...)` function of
+`include/dmcrypto_port.h`. Exactly one is loaded at a time.
 
-## Steps to add another architecture
+## The software port - `src/port/sw`
 
-1. Create `src/port/<family>/config.cmake`, setting `DMOD_TOOLS_NAME` for the
-   target architecture (see `src/port/stm32f7/config.cmake` for the pattern -
-   it must match a directory under `dmod/configs/arch/...`).
-2. Create `src/port/<family>/port.c` implementing the
-   `dmod_dmcrypto_port_api_declaration(...)` functions declared in
-   `include/dmcrypto_port.h`, plus `dmod_init`/`dmod_deinit` and any
-   `DMOD_IRQ_HANDLER(...)` needed.
-3. If the underlying peripheral IP is identical across families, factor the
-   shared logic into `src/port/<family>_common/` and keep each
-   `src/port/<family>/port.c` a thin wrapper (lifecycle + IRQ only) - see
-   `dmfmc/src/port/stm32_common/` for a real example of this split.
-4. Build by selecting the new family:
-   `cmake .. -DDMOD_CPU_FAMILY=<family>`.
-5. Do not introduce a module-specific variable (e.g. `<MODULE>_MCU_SERIES`) for
-   this - `DMOD_CPU_FAMILY` is the ecosystem-wide convention, already wired
-   into `dmf-get` package resolution.
+All algorithms in C, for any architecture. The release builds it for every
+architecture dmod supports (read from dmod's `configs/arch`, so a new one
+needs nothing here) and publishes it as `dmcrypto_port_sw`. Keep one source
+file per algorithm family (`sw/sha2.c`, `sw/aes.c`, ...): a hardware port
+compiles only the ones it needs.
+
+## A hardware port - `src/port/<family>`
+
+1. `src/port/<family>/config.cmake`: `DMOD_TOOLS_NAME` for the family (see
+   `stm32f7`).
+2. `src/port/<family>/port.c`: `dmod_init` / `dmod_deinit` and whatever
+   differs from the other families. It must call something from dmod (e.g.
+   `Dmod_Printf`) - a module without any import does not load.
+3. Shared code of related families goes to `src/port/<vendor>_common`
+   (`stm32_common`); it must **not** define `DMOD_ENABLE_REGISTRATION`
+   (only the family's `port.c` does, or every registration is duplicated).
+4. Add the sources in `src/port/CMakeLists.txt`.
+5. Whatever the peripherals do not do (e.g. ChaCha20 on an STM32 - CRYP is AES
+   only) is compiled in from `sw/`; say what the port has in
+   `dmcrypto_port_get_capabilities` (`supported`, and `accelerated` for the
+   hardware's share).
+
+The release and CI find the families by their `port.c` (`sw` excluded) and
+package each as `dmcrypto_port-<version>-<family>.zip`.
+
+## Which chip gets which port
+
+Not decided here. A family's chips differ in what they have (STM32F745/F746:
+no CRYP/HASH; F756/F777: both); the manifest or the board's `flash.dmd`
+names the package: `dmcrypto_port` (hardware, per family) or
+`dmcrypto_port_sw` (software, per architecture).
+
+## Rules for a port
+
+- Serialize your own hardware; callers need not.
+- Arguments are already validated by `dmcrypto`; do not repeat that, and do
+  not weaken it either - a direct caller has checked its own.
+- No software fallback for the random source: `-EIO` when the hardware fails.
+- Wipe secrets you copied (`dmcrypto_wipe`).
