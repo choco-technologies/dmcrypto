@@ -39,6 +39,14 @@ dmod_dmcrypto_port_api_declaration(1.0, int, _get_capabilities, ( dmcrypto_caps_
     return 0;
 }
 
+dmod_dmcrypto_port_api_declaration(1.0, int, _set_entropy, ( dmcrypto_entropy_fn_t source, void* context ))
+{
+    (void)source;
+    (void)context;
+    /* TODO(implementation): none needed when the port reads its own RNG */
+    return -ENOTSUP;
+}
+
 dmod_dmcrypto_port_api_declaration(1.0, int, _random, ( void* buffer, size_t size ))
 {
     (void)buffer;

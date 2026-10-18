@@ -30,8 +30,12 @@ one of the chip - so it has exactly one `dmcrypto_port`, under that one name.
 hardware does. A caller that calls often and has checked its arguments can call
 `dmcrypto_port_*` directly. See [docs/api-reference.md](docs/api-reference.md).
 
-**Status:** the interface and the build/release are in place; the algorithms
-are TODO (every port function returns `-ENOTSUP` for now).
+**Status:** the software port is complete (SHA-1/256/384/512, HMAC, PBKDF2, HKDF,
+AES-CBC/CTR, AES-GCM, ChaCha20-Poly1305), tested against OpenSSL's results and
+the RFCs' vectors (`tests/`). Random bytes come from a source the application
+sets with `dmcrypto_set_entropy()` (an adapter over `dmrng_fill()`; dmcrypto
+depends on no RNG driver and has no software fallback). The hardware ports
+(`stm32f7`, `stm32f4`) are still stubs: every function returns `-ENOTSUP`.
 
 ## Building
 

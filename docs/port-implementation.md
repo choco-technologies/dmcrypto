@@ -6,11 +6,14 @@ A port is `dmcrypto_port`: the module that implements every
 
 ## The software port - `src/port/sw`
 
-All algorithms in C, for any architecture. The release builds it for every
+All algorithms in C, for any architecture (done: see `tests/`). The release builds it for every
 architecture dmod supports (read from dmod's `configs/arch`, so a new one
-needs nothing here) and publishes it as `dmcrypto_port_sw`. Keep one source
-file per algorithm family (`sw/sha2.c`, `sw/aes.c`, ...): a hardware port
-compiles only the ones it needs.
+needs nothing here) and publishes it as `dmcrypto_port_sw`. One source
+file per algorithm family (`sha.c`, `hmac.c`, `aes.c`, `gcm.c`,
+`chacha_poly.c`, `util.c` always; declared in `sw.h`): a hardware port
+compiles only the ones it needs. `scripts/gen-sw-tables.py` made the SHA-2
+and AES constant tables (computed, not typed); `tests/fixtures/make_vectors.py`
+makes the expected results from OpenSSL.
 
 ## A hardware port - `src/port/<family>`
 
