@@ -25,11 +25,29 @@ Multi-part handles (`hash_start`, `hmac_start`) are freed by `_finish` or
 offers the cipher suites the port has, a secret store takes AES-GCM or falls
 back to ChaCha20-Poly1305.
 
+## The driver - `/dev/crypto`
+
+dmcrypto is also a dmdrvi driver (`driver_name=dmcrypto` in a dmdevfs ini;
+dmdevfs creates a node only for a configured section, so every board has one -
+`configs/board/<board>/crypto.ini`). One instance. The section name is the
+node's name. Key:
+
+| Key | Default | |
+|---|---|---|
+| `entropy` | `/dev/rng` | A node that returns random bytes when read (dmrng's); the driver gives dmcrypto a source that reads it. Empty: no source from the driver (the application's `dmcrypto_set_entropy()`) |
+
+The node: `read()` random bytes (`-ENODEV` without a working source, `-EIO`
+when it fails), `write()` `-EROFS`, `ioctl` `DMCRYPTO_IOCTL_GET_CAPABILITIES`
+(`dmcrypto_ioctl.h`). The node may be configured before its entropy node
+exists: the source is opened at the first use. Nothing else of dmcrypto is a
+file interface - hashes, ciphers and the rest are the functions above, called
+directly. Removing the driver removes the source it gave.
+
 ## Entropy
 
-dmcrypto has no RNG of its own and depends on no RNG driver. The application
-(a boot script, a service) gives it a `dmcrypto_entropy_fn_t` - e.g. a small
-function over `dmrng_fill()`:
+dmcrypto has no RNG of its own and depends on no RNG driver. The source is the
+driver's `entropy=` node, or any `dmcrypto_entropy_fn_t` the application
+gives to `dmcrypto_set_entropy()`:
 
     static int rng(void *context, void *buffer, size_t size)
     {
@@ -41,6 +59,11 @@ function over `dmrng_fill()`:
 The function must be a plain function of the registering module (not an entry
 in a table of initialized data: the dmod loader does not relocate those).
 `get_capabilities` reports `DMCRYPTO_CAP_RANDOM` while a source is set.
+
+## The `crypto` tool
+
+`crypto info`, `crypto random N`, `crypto hash ALG FILE | -s TEXT`
+(`tools/crypto/README.md`).
 
 ## Notes
 

@@ -32,9 +32,12 @@ hardware does. A caller that calls often and has checked its arguments can call
 
 **Status:** the software port is complete (SHA-1/256/384/512, HMAC, PBKDF2, HKDF,
 AES-CBC/CTR, AES-GCM, ChaCha20-Poly1305), tested against OpenSSL's results and
-the RFCs' vectors (`tests/`). Random bytes come from a source the application
-sets with `dmcrypto_set_entropy()` (an adapter over `dmrng_fill()`; dmcrypto
-depends on no RNG driver and has no software fallback). The hardware ports
+the RFCs' vectors (`tests/`). Random bytes come from an entropy source: the driver
+(`/dev/crypto`, configured by `configs/board/<board>/crypto.ini`) reads the
+node named by `entropy=` (dmrng's `/dev/rng`), or the application sets one with
+`dmcrypto_set_entropy()` - dmcrypto depends on no RNG driver and has no
+software fallback. The `crypto` tool (`crypto info | random | hash`) is in
+`tools/crypto`. The hardware ports
 (`stm32f7`, `stm32f4`) are still stubs: every function returns `-ENOTSUP`.
 
 ## Building

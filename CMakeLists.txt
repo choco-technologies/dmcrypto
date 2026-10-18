@@ -69,6 +69,14 @@ dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
     src/dmcrypto.c
 )
 
+# dmdrvi, dmini: the driver (/dev/crypto, configured by a dmdevfs ini section);
+# dmosi: its lock.
+dmod_link_modules(${DMOD_MODULE_NAME}
+    dmdrvi@>=2.9
+    dmini
+    dmosi
+)
+
 target_include_directories(${DMOD_MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -81,3 +89,10 @@ add_subdirectory(src/port)
 target_link_libraries(${DMOD_MODULE_NAME} ${DMOD_MODULE_NAME}_port_if)
 enable_testing()
 add_subdirectory(tests)
+
+# ======================================================================
+#               crypto Tool
+# ======================================================================
+# On-target application: the port's capabilities, random bytes and hashes from
+# the shell (see tools/crypto/README.md).
+add_subdirectory(tools/crypto)
