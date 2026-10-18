@@ -27,7 +27,14 @@
 dmod_dmcrypto_api(1.0, int, _get_capabilities, ( dmcrypto_caps_t* caps ));
 
 /**
- * Fills buffer with cryptographically strong random bytes (the board's entropy source; never a software fallback). -EIO when the source fails.
+ * Sets the source of random bytes (see dmcrypto_entropy_fn_t); NULL clears it.
+ * Until one is set dmcrypto_random() returns -ENODEV - there is no software
+ * fallback. The function and its context must stay valid until it is replaced.
+ */
+dmod_dmcrypto_api(1.0, int, _set_entropy, ( dmcrypto_entropy_fn_t source, void* context ));
+
+/**
+ * Fills buffer with cryptographically strong random bytes (from the source set by dmcrypto_set_entropy(); never a software fallback). -ENODEV when no source was set, -EIO when it fails.
  */
 dmod_dmcrypto_api(1.0, int, _random, ( void* buffer, size_t size ));
 
@@ -102,7 +109,7 @@ dmod_dmcrypto_api(1.0, int, _pbkdf2_hmac, ( dmcrypto_hash_alg_t alg, const void*
 dmod_dmcrypto_api(1.0, int, _hkdf, ( dmcrypto_hash_alg_t alg, const void* ikm, size_t ikm_size, const void* salt, size_t salt_size, const void* info, size_t info_size, void* output, size_t output_size ));
 
 /**
- * AES-CBC / AES-CTR (key 16, 24 or 32 bytes) over size bytes; input and output may be the same buffer. iv (DMCRYPTO_AES_BLOCK_SIZE bytes) is updated in place, so consecutive calls continue the stream.
+ * AES-CBC / AES-CTR (key 16, 24 or 32 bytes) over size bytes; input and output may be the same buffer. iv (DMCRYPTO_AES_BLOCK_SIZE bytes) is updated in place, so consecutive calls continue the stream (every call but the last a multiple of 16 bytes).
  */
 dmod_dmcrypto_api(1.0, int, _cipher_crypt, ( dmcrypto_cipher_alg_t alg, bool encrypt, const void* key, size_t key_size, uint8_t* iv, const void* input, void* output, size_t size ));
 

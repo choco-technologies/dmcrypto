@@ -19,7 +19,7 @@ set(DMOD_STACK_SIZE         1024)
 # algorithms are written: the software algorithms live in sw/ one file each,
 # so a hardware port takes only the ones it needs).
 if(DMOD_CPU_FAMILY STREQUAL "sw")
-    set(DMCRYPTO_PORT_SOURCES sw/port.c)
+    set(DMCRYPTO_PORT_SOURCES sw/port.c sw/util.c sw/sha.c sw/hmac.c sw/aes.c sw/gcm.c sw/chacha_poly.c)
 elseif(DMOD_CPU_FAMILY MATCHES "^stm32")
     set(DMCRYPTO_PORT_SOURCES ${DMOD_CPU_FAMILY}/port.c stm32_common/stm32_common.c)
 else()

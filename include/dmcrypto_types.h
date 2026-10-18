@@ -83,6 +83,17 @@ typedef struct
     uint32_t    accelerated;                        /**< ... of them the ones done by hardware */
 } dmcrypto_caps_t;
 
+/* ---- Entropy ---- */
+
+/**
+ * A source of strong random bytes (a hardware RNG - dmrng's dmrng_fill() - or
+ * the board's equivalent). Fills the whole buffer and returns 0, or returns a
+ * negative errno. The application hands one to dmcrypto_set_entropy(): dmcrypto
+ * itself depends on no RNG driver and has no software fallback (as dmtls).
+ * The function must be a plain function of a module, not data in a table.
+ */
+typedef int (*dmcrypto_entropy_fn_t)(void* context, void* buffer, size_t size);
+
 /* ---- Handles ---- */
 
 typedef struct dmcrypto_hash* dmcrypto_hash_t;      /**< Multi-part hash */
