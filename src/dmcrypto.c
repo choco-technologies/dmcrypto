@@ -2,7 +2,12 @@
 #include "dmod.h"
 #include "dmcrypto.h"
 #include "dmcrypto_port.h"
+#include "dmcrypto_ioctl.h"
+#include "dmdrvi.h"
+#include "dmini.h"
+#include "dmosi.h"
 #include <errno.h>
+#include <string.h>
 
 /*
  * The public API: it validates the arguments, then calls the port - so a port
@@ -216,6 +221,178 @@ dmod_dmcrypto_api_declaration(1.0, void, _wipe, ( void* buffer, size_t size ))
 
     for (size_t i = 0; p != NULL && i < size; i++)
         p[i] = 0;
+}
+
+/* ---- The driver: /dev/crypto ----
+ *
+ * One instance. It gives dmcrypto its entropy source: reads random bytes from
+ * the node named by `entropy` in its ini section (default /dev/rng, dmrng's) -
+ * so no RNG driver is linked, and any node that returns random bytes will do.
+ * Registrations share this translation unit with the API above (as dmrng).
+ */
+
+#define DEFAULT_ENTROPY_NODE    "/dev/rng"
+#define DEFAULT_NODE_NAME       "crypto"
+
+struct dmdrvi_context
+{
+    uint32_t        magic;
+    char           *entropy_path;       /* "" none */
+    void           *entropy_file;       /* Opened at the first use, again after a failure */
+    dmosi_mutex_t   lock;
+};
+
+#define DRIVER_MAGIC    0x43525950
+
+static dmdrvi_context_t g_instance;
+
+static bool context_ok(dmdrvi_context_t context)
+{
+    return context != NULL && context->magic == DRIVER_MAGIC;
+}
+
+/* dmcrypto_entropy_fn_t: a static function (the loader does not relocate pointer tables) */
+static int driver_entropy(void *context, void *buffer, size_t size)
+{
+    dmdrvi_context_t c = context;
+    int result = 0;
+
+    if (!context_ok(c))
+        return -EINVAL;
+    dmosi_mutex_lock(c->lock);
+    if (c->entropy_file == NULL)
+        c->entropy_file = Dmod_FileOpen(c->entropy_path, "r");
+    if (c->entropy_file == NULL)
+    {
+        result = -ENODEV;
+    }
+    else if (Dmod_FileRead(buffer, 1, size, c->entropy_file) != size)
+    {
+        Dmod_FileClose(c->entropy_file);        /* Opened again next time */
+        c->entropy_file = NULL;
+        result = -EIO;
+    }
+    dmosi_mutex_unlock(c->lock);
+    return result;
+}
+
+static void destroy_context(dmdrvi_context_t c)
+{
+    if (c->entropy_path != NULL && c->entropy_path[0] != '\0')
+        (void)dmcrypto_port_set_entropy(NULL, NULL);
+    if (c->entropy_file != NULL)
+        Dmod_FileClose(c->entropy_file);
+    if (c->lock != NULL)
+        dmosi_mutex_destroy(c->lock);
+    Dmod_Free(c->entropy_path);
+    c->magic = 0;
+    Dmod_Free(c);
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, dmdrvi_context_t, _create, ( dmini_context_t ini, dmdrvi_dev_num_t* dev_num ))
+{
+    if (ini == NULL || dev_num == NULL || g_instance != NULL)
+        return NULL;
+
+    const char *section = dmini_section_count(ini) ? dmini_section_name(ini, 0) : DEFAULT_NODE_NAME;
+    const char *entropy = dmini_get_string(ini, NULL, "entropy", DEFAULT_ENTROPY_NODE);
+
+    dmdrvi_context_t c = Dmod_Malloc(sizeof(*c));
+    if (c == NULL)
+        return NULL;
+    memset(c, 0, sizeof(*c));
+    c->magic = DRIVER_MAGIC;
+    c->entropy_path = Dmod_StrDup(entropy != NULL ? entropy : "");
+    c->lock = dmosi_mutex_create(false);
+    if (c->entropy_path == NULL || c->lock == NULL)
+    {
+        destroy_context(c);
+        return NULL;
+    }
+
+    if (c->entropy_path[0] != '\0')
+        (void)dmcrypto_port_set_entropy(driver_entropy, c);
+
+    /* The section name is the node's name (/dev/crypto) */
+    memset(dev_num, 0, sizeof(*dev_num));
+    if (section != NULL && section[0] != '\0' && strlen(section) <= DMDRVI_ALT_NAME_MAX_LEN)
+    {
+        dev_num->flags = DMDRVI_NUM_ALT_NAME;
+        memcpy(dev_num->alt_name, section, strlen(section) + 1);
+    }
+    else
+    {
+        dev_num->flags = DMDRVI_NUM_MAJOR;
+    }
+    g_instance = c;
+    return c;
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, void, _free, ( dmdrvi_context_t context ))
+{
+    if (!context_ok(context))
+        return;
+    if (g_instance == context)
+        g_instance = NULL;
+    destroy_context(context);
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, void*, _open, ( dmdrvi_context_t context, int flags, const dmdrvi_dev_num_t* dev_num ))
+{
+    (void)flags;
+    (void)dev_num;
+    return context_ok(context) ? context : NULL;
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, void, _close, ( dmdrvi_context_t context, void* handle ))
+{
+    (void)context;
+    (void)handle;
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, dmdrvi_ssize_t, _read, ( dmdrvi_context_t context, void* handle, void* buffer, size_t size, dmdrvi_offset_t offset ))
+{
+    (void)offset;
+    if (!context_ok(context) || handle != context)
+        return -EBADF;
+    if (size > (size_t)INT32_MAX)
+        size = (size_t)INT32_MAX;
+    int result = dmcrypto_random(buffer, size);
+    return result == 0 ? (dmdrvi_ssize_t)size : result;
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, dmdrvi_ssize_t, _write, ( dmdrvi_context_t context, void* handle, const void* buffer, size_t size, dmdrvi_offset_t offset ))
+{
+    (void)context; (void)handle; (void)buffer; (void)size; (void)offset;
+    return -EROFS;
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, int, _ioctl, ( dmdrvi_context_t context, void* handle, int command, void* arg ))
+{
+    if (!context_ok(context) || handle != context)
+        return -EBADF;
+    switch (command)
+    {
+        case DMCRYPTO_IOCTL_GET_CAPABILITIES:
+            return arg == NULL ? -EINVAL : dmcrypto_get_capabilities((dmcrypto_caps_t *)arg);
+        default:
+            return -ENOTTY;     /* Including the standard commands dmdevfs probes every node with */
+    }
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, int, _flush, ( dmdrvi_context_t context, void* handle ))
+{
+    return context_ok(context) && handle == context ? 0 : -EBADF;
+}
+
+dmod_dmdrvi_dif_api_declaration(2.0, dmcrypto, int, _stat, ( dmdrvi_context_t context, const char* path, dmdrvi_stat_t* stat ))
+{
+    (void)path;
+    if (!context_ok(context) || stat == NULL)
+        return -EINVAL;
+    stat->size = 0;
+    stat->mode = 0020000 | 0444;        /* A character device, read-only */
+    return 0;
 }
 
 /* ---- DMOD lifecycle ---- */

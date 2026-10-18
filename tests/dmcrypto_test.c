@@ -1,6 +1,10 @@
 #define DMOD_ENABLE_REGISTRATION ON
+#define ENABLE_DIF_REGISTRATIONS ON
 #include "dmod_test.h"
 #include "dmcrypto.h"
+#include "dmcrypto_ioctl.h"
+#include "dmdrvi.h"
+#include "dmini.h"
 #include "vectors.h"
 #include <errno.h>
 #include <string.h>
@@ -492,4 +496,170 @@ DMOD_TEST_STEP(aead_rejects_bad_arguments)
     DMOD_TEST_EXPECT_EQ(dmcrypto_aead_encrypt(DMCRYPTO_AEAD_CHACHA20_POLY1305, key, 16, nonce, 12, NULL, 0, data, 16, data, tag, 16), -EINVAL);
     DMOD_TEST_EXPECT_EQ(dmcrypto_aead_encrypt(DMCRYPTO_AEAD_CHACHA20_POLY1305, key, 32, nonce, 12, NULL, 0, data, 16, data, tag, 8), -EINVAL);
     DMOD_TEST_EXPECT_EQ(dmcrypto_aead_encrypt((dmcrypto_aead_alg_t)7, key, 32, nonce, 12, NULL, 0, data, 16, data, tag, 16), -EINVAL);
+}
+
+/* ---- The driver: /dev/crypto ---- */
+
+typedef struct
+{
+    dmod_dmdrvi_create_t    create;
+    dmod_dmdrvi_free_t      free;
+    dmod_dmdrvi_open_t      open;
+    dmod_dmdrvi_close_t     close;
+    dmod_dmdrvi_read_t      read;
+    dmod_dmdrvi_write_t     write;
+    dmod_dmdrvi_ioctl_t     ioctl;
+} driver_t;
+
+typedef struct
+{
+    driver_t            drv;
+    dmini_context_t     ini;
+    dmdrvi_context_t    ctx;
+    dmdrvi_dev_num_t    dev_num;
+    void*               handle;
+} device_t;
+
+static bool device_open(device_t* dev, const char* ini_text)
+{
+    Dmod_Context_t* module = Dmod_GetModuleContext("dmcrypto");
+
+    memset(dev, 0, sizeof(*dev));
+    if (module == NULL)
+        return false;
+    dev->drv.create = Dmod_GetDifFunction(module, dmod_dmdrvi_create_sig);
+    dev->drv.free   = Dmod_GetDifFunction(module, dmod_dmdrvi_free_sig);
+    dev->drv.open   = Dmod_GetDifFunction(module, dmod_dmdrvi_open_sig);
+    dev->drv.close  = Dmod_GetDifFunction(module, dmod_dmdrvi_close_sig);
+    dev->drv.read   = Dmod_GetDifFunction(module, dmod_dmdrvi_read_sig);
+    dev->drv.write  = Dmod_GetDifFunction(module, dmod_dmdrvi_write_sig);
+    dev->drv.ioctl  = Dmod_GetDifFunction(module, dmod_dmdrvi_ioctl_sig);
+    if (dev->drv.create == NULL || dev->drv.free == NULL || dev->drv.open == NULL || dev->drv.close == NULL ||
+        dev->drv.read == NULL || dev->drv.write == NULL || dev->drv.ioctl == NULL)
+        return false;
+
+    dev->ini = dmini_create();
+    dmini_parse_string(dev->ini, ini_text);
+    dmini_set_active_section(dev->ini, "crypto", 0);
+    dev->ctx = dev->drv.create(dev->ini, &dev->dev_num);
+    if (dev->ctx == NULL)
+        return false;
+    dev->handle = dev->drv.open(dev->ctx, DMDRVI_O_RDONLY, &dev->dev_num);
+    return dev->handle != NULL;
+}
+
+static void device_close(device_t* dev)
+{
+    if (dev->handle != NULL)
+        dev->drv.close(dev->ctx, dev->handle);
+    if (dev->ctx != NULL)
+        dev->drv.free(dev->ctx);
+    if (dev->ini != NULL)
+        dmini_destroy(dev->ini);
+}
+
+/* /dev/zero is a node that returns bytes when read: a source whose output is known */
+#define INI_ZERO    "[crypto]\ndriver_name=dmcrypto\nentropy=/dev/zero\n"
+#define INI_NONE    "[crypto]\ndriver_name=dmcrypto\nentropy=/dev/does-not-exist\n"
+#define INI_EMPTY   "[crypto]\ndriver_name=dmcrypto\nentropy=\n"
+
+DMOD_TEST_STEP(driver_names_the_node_after_its_section)
+{
+    device_t dev;
+
+    DMOD_TEST_EXPECT_TRUE(device_open(&dev, INI_ZERO));
+    DMOD_TEST_EXPECT_EQ(dev.dev_num.flags, DMDRVI_NUM_ALT_NAME);
+    DMOD_TEST_EXPECT_EQ(strcmp(dev.dev_num.alt_name, "crypto"), 0);
+    device_close(&dev);
+}
+
+DMOD_TEST_STEP(driver_reads_random_from_the_entropy_node)
+{
+    device_t dev;
+    uint8_t buffer[16];
+    dmcrypto_caps_t caps;
+
+    DMOD_TEST_EXPECT_TRUE(device_open(&dev, INI_ZERO));
+    memset(buffer, 0x55, sizeof(buffer));
+    DMOD_TEST_EXPECT_EQ(dev.drv.read(dev.ctx, dev.handle, buffer, sizeof(buffer), 0), (dmdrvi_ssize_t)sizeof(buffer));
+    DMOD_TEST_EXPECT_EQ(buffer[0], 0);                  /* what /dev/zero gave */
+    DMOD_TEST_EXPECT_EQ(buffer[15], 0);
+
+    /* and dmcrypto_random() takes the same source */
+    memset(buffer, 0x55, sizeof(buffer));
+    DMOD_TEST_EXPECT_EQ(dmcrypto_random(buffer, sizeof(buffer)), 0);
+    DMOD_TEST_EXPECT_EQ(buffer[7], 0);
+
+    DMOD_TEST_EXPECT_EQ(dev.drv.ioctl(dev.ctx, dev.handle, DMCRYPTO_IOCTL_GET_CAPABILITIES, &caps), 0);
+    DMOD_TEST_EXPECT_TRUE((caps.supported & DMCRYPTO_CAP_RANDOM) != 0);
+    DMOD_TEST_EXPECT_EQ(dev.drv.ioctl(dev.ctx, dev.handle, DMCRYPTO_IOCTL_GET_CAPABILITIES, NULL), -EINVAL);
+    DMOD_TEST_EXPECT_EQ(dev.drv.ioctl(dev.ctx, dev.handle, 0x7777, &caps), -ENOTTY);
+    DMOD_TEST_EXPECT_EQ(dev.drv.write(dev.ctx, dev.handle, buffer, 4, 0), -EROFS);
+    device_close(&dev);
+
+    /* the driver took its source with it */
+    DMOD_TEST_EXPECT_EQ(dmcrypto_random(buffer, sizeof(buffer)), -ENODEV);
+}
+
+DMOD_TEST_STEP(driver_without_a_working_source_says_so)
+{
+    device_t dev;
+    uint8_t buffer[8];
+
+    DMOD_TEST_EXPECT_TRUE(device_open(&dev, INI_NONE));         /* the node is created, the source is not there yet */
+    DMOD_TEST_EXPECT_EQ(dev.drv.read(dev.ctx, dev.handle, buffer, sizeof(buffer), 0), -ENODEV);
+    device_close(&dev);
+
+    DMOD_TEST_EXPECT_TRUE(device_open(&dev, INI_EMPTY));        /* no source configured: the application's */
+    DMOD_TEST_EXPECT_EQ(dev.drv.read(dev.ctx, dev.handle, buffer, sizeof(buffer), 0), -ENODEV);
+    device_close(&dev);
+}
+
+DMOD_TEST_STEP(driver_has_one_instance)
+{
+    device_t first, second;
+
+    DMOD_TEST_EXPECT_TRUE(device_open(&first, INI_ZERO));
+    DMOD_TEST_EXPECT_FALSE(device_open(&second, INI_ZERO));
+    device_close(&second);
+    device_close(&first);
+}
+
+/* ---- The crypto tool (run as a module, as dmnet's tools are tested) ---- */
+
+DMOD_TEST_STEP(tool_hashes_a_text_and_rejects_an_unknown_algorithm)
+{
+    char* sha256[] = { "crypto", "hash", "sha256", "-s", "abc" };
+    char* md5[] = { "crypto", "hash", "md5", "-s", "abc" };
+    char* missing[] = { "crypto", "hash", "sha1", "/does/not/exist" };
+
+    DMOD_TEST_EXPECT_EQ(Dmod_RunModule("crypto", 5, sha256), 0);
+    DMOD_TEST_EXPECT_NE(Dmod_RunModule("crypto", 5, md5), 0);
+    DMOD_TEST_EXPECT_NE(Dmod_RunModule("crypto", 4, missing), 0);
+    DMOD_TEST_EXPECT_FALSE(Dmod_IsModuleLoaded("crypto"));
+}
+
+DMOD_TEST_STEP(tool_random_needs_a_source_and_a_sane_count)
+{
+    char* random16[] = { "crypto", "random", "16" };
+    char* too_many[] = { "crypto", "random", "5000" };
+    char* not_a_number[] = { "crypto", "random", "x1" };
+    char* help[] = { "crypto", "--help" };
+    int calls = 0;
+
+    DMOD_TEST_EXPECT_EQ(dmcrypto_set_entropy(NULL, NULL), 0);
+    DMOD_TEST_EXPECT_NE(Dmod_RunModule("crypto", 3, random16), 0);     /* no source */
+    DMOD_TEST_EXPECT_EQ(dmcrypto_set_entropy(test_entropy, &calls), 0);
+    DMOD_TEST_EXPECT_EQ(Dmod_RunModule("crypto", 3, random16), 0);
+    DMOD_TEST_EXPECT_NE(Dmod_RunModule("crypto", 3, too_many), 0);
+    DMOD_TEST_EXPECT_NE(Dmod_RunModule("crypto", 3, not_a_number), 0);
+    DMOD_TEST_EXPECT_EQ(Dmod_RunModule("crypto", 2, help), 0);
+    DMOD_TEST_EXPECT_EQ(dmcrypto_set_entropy(NULL, NULL), 0);
+}
+
+DMOD_TEST_STEP(tool_info_needs_the_node)
+{
+    char* none[] = { "crypto", "info", "/dev/does-not-exist" };
+
+    DMOD_TEST_EXPECT_NE(Dmod_RunModule("crypto", 3, none), 0);
 }
